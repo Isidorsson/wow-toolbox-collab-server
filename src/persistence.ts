@@ -1,83 +1,64 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { env } from "./env";
 
-let client: SupabaseClient | null = null;
+/**
+ * Direct PostgREST client — bypasses `@supabase/supabase-js` because
+ * that library's RPC URL builder was returning `PGRST125: Invalid
+ * path specified in request URL` for every call on Bun runtime,
+ * even though the underlying RPCs work when invoked through the
+ * Supabase SQL editor. Plain fetch sidesteps the issue, gives us
+ * one fewer dependency layer to debug, and is half a screen of code.
+ */
 
-function getClient(): SupabaseClient {
-  if (client) return client;
-  client = createClient(env.supabaseUrl, env.supabaseServiceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
+const REST_BASE = `${env.supabaseUrl.replace(/\/$/, "")}/rest/v1`;
+
+function commonHeaders(): Record<string, string> {
+  return {
+    apikey: env.supabaseServiceRoleKey,
+    Authorization: `Bearer ${env.supabaseServiceRoleKey}`,
+    "Content-Type": "application/json",
+    // Tells PostgREST to return the function's scalar return as a bare
+    // JSON value (string/null) instead of wrapping it in an array.
+    Accept: "application/json",
+  };
+}
+
+async function callRpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
+  const url = `${REST_BASE}/rpc/${fn}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: commonHeaders(),
+    body: JSON.stringify(args),
   });
-  return client;
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = await res.text();
+    } catch {
+      // ignore — best-effort body capture
+    }
+    throw new Error(
+      `PostgREST ${fn} HTTP ${res.status}: ${detail.slice(0, 500)}`,
+    );
+  }
+  return (await res.json()) as T;
 }
 
 /**
- * Load the binary Y.Doc state for a given doc name.
- * Returns `null` when the doc does not exist yet — Hocuspocus treats that as
- * "empty doc, initialize fresh".
- *
- * Round-trips through the `yjs_doc_get` RPC which returns base64-encoded TEXT
- * because PostgREST's BYTEA-over-JSON is inconsistent (writes accept base64,
- * reads come back as `\\x` hex).
+ * Load the binary Y.Doc state for a given doc name. Returns null if
+ * the row doesn't exist yet — Hocuspocus treats null as "fresh doc".
  */
 export async function fetchDocument(name: string): Promise<Uint8Array | null> {
-  const supabase = getClient();
-  let data: unknown;
-  try {
-    const result = await supabase.rpc("yjs_doc_get", { p_name: name });
-    if (result.error) {
-      throw new Error(
-        `PostgREST error: ${result.error.message} (code=${result.error.code ?? "?"} hint=${result.error.hint ?? "?"})`,
-      );
-    }
-    data = result.data;
-  } catch (err) {
-    // Wrap with constructor name so opaque fetch errors are diagnosable.
-    const cause = err instanceof Error ? err : new Error(String(err));
-    throw new Error(
-      `fetchDocument(${name}) failed [${cause.constructor.name}]: ${cause.message}`,
-      { cause },
-    );
+  const b64 = await callRpc<string | null>("yjs_doc_get", { p_name: name });
+  if (b64 == null) return null;
+  if (typeof b64 !== "string") {
+    throw new Error(`fetchDocument(${name}): expected string, got ${typeof b64}`);
   }
-  if (data == null) return null;
-  if (typeof data !== "string") {
-    throw new Error(`fetchDocument(${name}) returned non-string payload`);
-  }
-  return base64ToBytes(data);
-}
-
-/**
- * Persist the full binary Y.Doc state for a given doc name.
- * Called by Hocuspocus on debounced changes and on doc unload.
- */
-export async function storeDocument(name: string, state: Uint8Array): Promise<void> {
-  const supabase = getClient();
-  const b64 = bytesToBase64(state);
-  try {
-    const result = await supabase.rpc("yjs_doc_upsert", {
-      p_name: name,
-      p_data_b64: b64,
-    });
-    if (result.error) {
-      throw new Error(
-        `PostgREST error: ${result.error.message} (code=${result.error.code ?? "?"} hint=${result.error.hint ?? "?"})`,
-      );
-    }
-  } catch (err) {
-    const cause = err instanceof Error ? err : new Error(String(err));
-    throw new Error(
-      `storeDocument(${name}) failed [${cause.constructor.name}]: ${cause.message}`,
-      { cause },
-    );
-  }
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  // Bun/Node both have Buffer; use it for performance over a manual loop.
-  return Buffer.from(bytes).toString("base64");
-}
-
-function base64ToBytes(b64: string): Uint8Array {
   const buf = Buffer.from(b64, "base64");
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
+/** Persist the full binary Y.Doc state for a given doc name. */
+export async function storeDocument(name: string, state: Uint8Array): Promise<void> {
+  const b64 = Buffer.from(state).toString("base64");
+  await callRpc<null>("yjs_doc_upsert", { p_name: name, p_data_b64: b64 });
 }
