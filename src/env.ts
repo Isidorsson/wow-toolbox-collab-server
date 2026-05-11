@@ -1,5 +1,8 @@
 function required(name: string): string {
-  const value = process.env[name];
+  // Trim — Railway's UI can capture trailing whitespace / newlines on
+  // paste, which makes downstream fetch() throw "Invalid path specified
+  // in request URL" with no useful stack.
+  const value = process.env[name]?.trim();
   if (!value || value.length === 0) {
     throw new Error(`Missing required environment variable: ${name}`);
   }
@@ -7,7 +10,7 @@ function required(name: string): string {
 }
 
 function optional(name: string, fallback: string): string {
-  const value = process.env[name];
+  const value = process.env[name]?.trim();
   return value && value.length > 0 ? value : fallback;
 }
 

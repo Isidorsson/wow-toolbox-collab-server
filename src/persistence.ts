@@ -22,10 +22,22 @@ function getClient(): SupabaseClient {
  */
 export async function fetchDocument(name: string): Promise<Uint8Array | null> {
   const supabase = getClient();
-  const { data, error } = await supabase.rpc("yjs_doc_get", { p_name: name });
-
-  if (error) {
-    throw new Error(`fetchDocument(${name}) failed: ${error.message}`);
+  let data: unknown;
+  try {
+    const result = await supabase.rpc("yjs_doc_get", { p_name: name });
+    if (result.error) {
+      throw new Error(
+        `PostgREST error: ${result.error.message} (code=${result.error.code ?? "?"} hint=${result.error.hint ?? "?"})`,
+      );
+    }
+    data = result.data;
+  } catch (err) {
+    // Wrap with constructor name so opaque fetch errors are diagnosable.
+    const cause = err instanceof Error ? err : new Error(String(err));
+    throw new Error(
+      `fetchDocument(${name}) failed [${cause.constructor.name}]: ${cause.message}`,
+      { cause },
+    );
   }
   if (data == null) return null;
   if (typeof data !== "string") {
@@ -41,13 +53,22 @@ export async function fetchDocument(name: string): Promise<Uint8Array | null> {
 export async function storeDocument(name: string, state: Uint8Array): Promise<void> {
   const supabase = getClient();
   const b64 = bytesToBase64(state);
-  const { error } = await supabase.rpc("yjs_doc_upsert", {
-    p_name: name,
-    p_data_b64: b64,
-  });
-
-  if (error) {
-    throw new Error(`storeDocument(${name}) failed: ${error.message}`);
+  try {
+    const result = await supabase.rpc("yjs_doc_upsert", {
+      p_name: name,
+      p_data_b64: b64,
+    });
+    if (result.error) {
+      throw new Error(
+        `PostgREST error: ${result.error.message} (code=${result.error.code ?? "?"} hint=${result.error.hint ?? "?"})`,
+      );
+    }
+  } catch (err) {
+    const cause = err instanceof Error ? err : new Error(String(err));
+    throw new Error(
+      `storeDocument(${name}) failed [${cause.constructor.name}]: ${cause.message}`,
+      { cause },
+    );
   }
 }
 
