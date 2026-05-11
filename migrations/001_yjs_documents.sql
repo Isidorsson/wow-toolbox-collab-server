@@ -43,3 +43,44 @@ ALTER TABLE public.yjs_documents DISABLE ROW LEVEL SECURITY;
 
 COMMENT ON TABLE public.yjs_documents IS
   'Binary Yjs document state. Service-role access only. Auth enforced at WS layer in collab server.';
+
+-- ---------------------------------------------------------------------------
+-- RPC bridge for BYTEA <-> base64.
+--
+-- PostgREST handles BYTEA awkwardly over JSON (writes are accepted as base64,
+-- reads come back as hex strings — inconsistent). These two RPCs make the
+-- collab server's life simple: pass and receive base64 TEXT, the function
+-- handles the encode/decode against the underlying BYTEA column.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.yjs_doc_get(p_name TEXT)
+RETURNS TEXT
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT encode(data, 'base64')
+  FROM public.yjs_documents
+  WHERE name = p_name;
+$$;
+
+CREATE OR REPLACE FUNCTION public.yjs_doc_upsert(p_name TEXT, p_data_b64 TEXT)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.yjs_documents (name, data)
+  VALUES (p_name, decode(p_data_b64, 'base64'))
+  ON CONFLICT (name) DO UPDATE
+    SET data = EXCLUDED.data;
+END;
+$$;
+
+-- Service role bypasses RLS, but explicit grants make intent obvious and
+-- guard against future RLS being flipped on.
+REVOKE ALL ON FUNCTION public.yjs_doc_get(TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.yjs_doc_upsert(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.yjs_doc_get(TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.yjs_doc_upsert(TEXT, TEXT) TO service_role;
