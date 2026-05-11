@@ -15,7 +15,10 @@ export const env = {
   port: Number.parseInt(optional("PORT", "1234"), 10),
   supabaseUrl: required("SUPABASE_URL"),
   supabaseServiceRoleKey: required("SUPABASE_SERVICE_ROLE_KEY"),
-  supabaseJwtSecret: required("SUPABASE_JWT_SECRET"),
+  // Optional now — only required if the Supabase project still signs
+  // tokens with HS256. Asymmetric (ES256 / RS256) tokens verify via
+  // JWKS (no shared secret needed).
+  supabaseJwtSecret: optional("SUPABASE_JWT_SECRET", "") || null,
   allowedDocPrefixes: optional("ALLOWED_DOC_PREFIXES", "")
     .split(",")
     .map((s) => s.trim())
