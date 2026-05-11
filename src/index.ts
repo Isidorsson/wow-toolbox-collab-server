@@ -5,7 +5,10 @@ import { env } from "./env";
 import { isDocNameAllowed, verifySupabaseToken, type AuthedUser } from "./auth";
 import { fetchDocument, storeDocument } from "./persistence";
 
-const server = new Server({
+// v2.x exports Server as a pre-instantiated singleton — use the factory
+// method `configure()`, not `new Server(...)`. The latter throws
+// "Hocuspocus is not a constructor" at runtime.
+const server = Server.configure({
   port: env.port,
   address: "0.0.0.0",
 
@@ -13,11 +16,11 @@ const server = new Server({
     new Logger({
       onLoadDocument: env.logLevel === "debug",
       onChange: false,
+      onStoreDocument: env.logLevel === "debug",
       onConnect: true,
       onDisconnect: true,
       onUpgrade: false,
       onRequest: false,
-      onListen: true,
       onDestroy: true,
       onConfigure: env.logLevel === "debug",
     }),
