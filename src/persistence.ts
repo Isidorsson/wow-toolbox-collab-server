@@ -9,7 +9,10 @@ import { env } from "./env";
  * one fewer dependency layer to debug, and is half a screen of code.
  */
 
-const REST_BASE = `${env.supabaseUrl.replace(/\/$/, "")}/rest/v1`;
+// Defensive normalization: strip trailing slashes and any accidental
+// `/rest/v1` suffix the user might paste into Railway. Without this,
+// `${url}/rest/v1` produces `/rest/v1/rest/v1/rpc/...` -> PostgREST 404.
+const REST_BASE = `${env.supabaseUrl.replace(/\/+$/, "").replace(/\/rest\/v\d+$/, "")}/rest/v1`;
 
 function commonHeaders(): Record<string, string> {
   return {
