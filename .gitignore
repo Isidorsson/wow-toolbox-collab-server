@@ -4,4 +4,6 @@ node_modules/
 *.log
 dist/
 .DS_Store
-bun.lockb
+
+# Lockfiles (bun.lockb, bun.lock) are deliberately committed so Railway
+# reproduces the exact dependency tree used locally.
