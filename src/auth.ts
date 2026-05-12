@@ -13,32 +13,18 @@ export interface AuthedUser {
 }
 
 /**
- * Supabase projects can sign tokens with either:
- *   - HS256 (legacy "JWT Secret" — symmetric shared secret), or
- *   - ES256 / RS256 (modern asymmetric keys exposed via JWKS).
- *
- * Newer projects default to asymmetric. Even projects still labelled
- * "Current = HS256" sometimes sign tokens with the standby asymmetric
- * key during rotation, so we have to support both.
- *
- * Strategy: peek at the unverified token header to read `alg`, then
- * dispatch to the right verifier. `jwtVerify` re-checks `alg` against
- * the algorithms list we pass in, so reading the header first does
- * not weaken security — a forged header that doesn't match the key
- * type will fail at signature check.
+ * Supabase signs tokens with HS256 (legacy shared secret) or ES256/RS256
+ * (asymmetric, via JWKS). Even projects labelled "Current = HS256" emit
+ * asymmetric tokens during key rotation, so support both.
  */
 
 const hs256Secret = env.supabaseJwtSecret
   ? new TextEncoder().encode(env.supabaseJwtSecret)
   : null;
 
-const jwksUrl = new URL(
-  "/auth/v1/.well-known/jwks.json",
-  env.supabaseUrl,
+const jwks = createRemoteJWKSet(
+  new URL("/auth/v1/.well-known/jwks.json", env.supabaseUrl),
 );
-// `createRemoteJWKSet` caches keys in-process with a 10-minute TTL and
-// transparently refreshes on `kid` miss. Safe to call once at module load.
-const jwks = createRemoteJWKSet(jwksUrl);
 
 export async function verifySupabaseToken(token: string): Promise<AuthedUser> {
   const header = decodeProtectedHeader(token);
@@ -61,9 +47,7 @@ export async function verifySupabaseToken(token: string): Promise<AuthedUser> {
       throw new Error(`Unsupported JWT algorithm: ${alg ?? "unknown"}`);
     }
   } catch (err) {
-    // Surface alg + kid so log lines are actionable instead of just
-    // "signature verification failed". Token body is NOT logged.
-    const kid = typeof header.kid === "string" ? header.kid : "none";
+    const kid = header.kid ?? "none";
     throw new Error(
       `JWT verification failed (alg=${alg ?? "unknown"}, kid=${kid}): ${
         err instanceof Error ? err.message : String(err)
